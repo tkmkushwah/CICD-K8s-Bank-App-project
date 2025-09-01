@@ -95,3 +95,67 @@ resource "aws_security_group" "devopstkm_node_sg" {
     }
   }
 
+# When we create an EKS cluster, AWS runs a control plane (managed by AWS).
+# That control plane needs permissions to talk to AWS resources (like networking, load balancers, worker nodes, etc.).
+
+# So, we create an IAM Role and attach policies (like AmazonEKSClusterPolicy) to it.
+
+# Eks controle plane is not inside the vpc it is managed by aws 
+# why subnets are required then?
+# Actualy it connects with vpc using ENIs (Elastic network interfaces)
+# so aws needs to know in which subnets it can create those ENIs.
+# The ENIs allow our worker nodes (in our VPC) to talk to the control plane.
+# If we pass two subnets, AWS will create ENIs in both subnets (for High Availability ).
+# The security group we give here controls traffic between the control plane and our worker nodes
+
+
+#                     AWS Managed EKS Control Plane
+#                    (API Server, etcd, etc.)
+#                               │
+#                               │ Communicates via ENIs
+#                               ▼
+#         ┌────────────────────────────────────────┐
+#         │                 Your VPC               │
+#         │                                        │
+#         │  ┌─────────────┐        ┌─────────────┐│
+#         │  │ Subnet 1    │        │ Subnet 2    ││
+#         │  │ (private)   │        │ (private)   ││
+#         │  │ ENI attached│        │ ENI attached││
+#         │  │ Security    │        │ Security    ││
+#         │  │ Group: sg-1 │        │ Group: sg-1 ││
+#         │  └─────┬──────┘        └─────┬──────┘. │
+#         │        │ Worker Nodes (EC2 instances)  │
+#         │        │ kubectl / kubelet connects    │ 
+#         │        ▼                               │ 
+#         │    Node Group                          │
+#         └─────────────────────────────────────┘
+
+//create EKS cluster 
+  resource "aws_eks_cluster" "devopstkm" {
+    name     ="devopstkm-cluster"
+    role_arn=aws_iam_role.devopstkm_cluster_role.arn //Hey EKS cluster, use this IAM Role (its ARN) for your permissions.
+    vpc_config {
+      subnet_ids = aws_subnet.devopstkm_subnet[*].id
+      security_group_ids = [aws_security_group.devopstkm_cluster_sg.id]
+    }
+  }
+
+
+//Create node Group (Worker Nodes): These are the actual servers (EC2 instances in AWS) where our pods run.
+resource "aws_eks_node_group" "devopstkm" {
+    cluster_name =aws_eks_cluster.devopstkm.name
+    node_group_name ="devopstkm-node-group"
+    node_role_arn =aws_iam_role.devopstkm_node_group_role.arn//Hey EKS node group, use this IAM Role (its ARN) for your permissions.
+    subnet_ids =aws_subnet.devopstkm_subnet[*].id //Hey EKS node group, launch worker nodes in these subnets.
+  scaling_config {
+     desired_size =3 //number of worker nodes
+     max_size =3 //max number of worker nodes
+     min_size =3 //min number of worker nodes
+    }
+     instance_types =["t2.large"] //2 vCPU and 8 GiB memory
+    
+    remote_access { // Enable SSH access to the worker nodes
+      ec2_ssh_key = var.ssh_key_name //name of the ssh key pair
+      source_security_group_ids=[aws_security_group.devopstkm_node_sg.id] //security group which allows inbound traffic
+    }
+}
