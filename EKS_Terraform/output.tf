@@ -36,7 +36,7 @@ output "route_table_id" {
 
 //node group id 
 output "node_group_id" {
-  value       = aws_eks_node_group.devopstkm_node_group.id
+  value       = aws_eks_node_group.devopstkm.id
   description = "EKS Node Group ID"
 }
 
